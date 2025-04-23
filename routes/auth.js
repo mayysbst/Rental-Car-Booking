@@ -9,11 +9,12 @@ const {
 } = require('../controllers/authController');
 
 const router = express.Router();
+const { protect } = require('../middleware/auth');
 
 router.post('/register', register);
 router.post('/login', login);
 router.get('/logout', logout);
-router.get('/me', getMe); // after login
+router.route('/me').get(protect, getMe); // after login
 router.post('/forgotpassword', forgotPassword);
 router.put('/resetpassword/:id', resetPassword);
 
