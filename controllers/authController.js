@@ -80,31 +80,110 @@ exports.logout = (req, res, next) => {
 //@desc     Forgot password
 //@route    POST /api/v1/auth/forgotpassword
 //@access   Public
-exports.forgotPassword = async (req, res, next) => {
-    const user = await User.findOne({ email: req.body.email });
+exports.forgotPassword = async (req, res) => {
+    let user; // Declare user variable in outer scope
 
-    if (!user) {
-        return res.status(404).json({ success: false, message: 'User not found' });
+    try {
+        user = await User.findOne({ email: req.body.email });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Generate reset token
+        const resetToken = user.getResetPasswordToken(); // Use the model method
+
+        // Save the user with the reset token
+        await user.save({ validateBeforeSave: false });
+
+        // Create reset url
+        const resetUrl = `http://localhost:5173/reset-password/${resetToken}`;
+
+        const message = `You are receiving this email because you has requested the reset of a password. Please click on the following link to reset your password: \n\n ${resetUrl}`;
+
+        await sendEmail({
+            email: user.email,
+            subject: 'Reset Your Password',
+            message: message
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Email sent'
+        });
+
+    } catch (err) {
+        console.error('Forgot password error:', err);
+
+        if (user) {
+            // Reset user fields
+            user.resetPasswordToken = undefined;
+            user.resetPasswordExpire = undefined;
+            await user.save({ validateBeforeSave: false });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: 'Email could not be sent'
+        });
     }
-
-    // Simulate sending email
-    res.status(200).json({ success: true, message: 'Email sent with password reset instructions' });
 };
 
 //@desc     Reset password
 //@route    PUT /api/v1/auth/resetpassword/:id
 //@access   Public
 exports.resetPassword = async (req, res, next) => {
-    const user = await User.findById(req.params.id);
+    try {
+        // Log the received token
+        console.log('Received reset token:', req.params.resetToken);
 
-    if (!user) {
-        return res.status(404).json({ success: false, message: 'User not found' });
+        // Get hashed token
+        const resetPasswordToken = crypto
+            .createHash('sha256')
+            .update(req.params.resetToken)
+            .digest('hex');
+            
+        // Log the hashed token
+        console.log('Hashed token:', resetPasswordToken);
+
+        const user = await User.findOne({
+            resetPasswordToken,
+            resetPasswordExpire: { $gt: Date.now() }
+        });
+
+        // Log user search result
+        console.log('Found user:', user ? 'Yes' : 'No');
+        if (user) {
+            console.log('Token expiry:', user.resetPasswordExpire);
+            console.log('Current time:', new Date());
+        }
+
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired reset token'
+            });
+        }
+
+        // Set new password
+        user.password = req.body.password;
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpire = undefined;
+
+        await user.save();
+
+        sendTokenResponse(user, 200, res);
+    } catch (err) {
+        console.error('Reset password error:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Could not reset password',
+            error: err.message
+        });
     }
-
-    user.password = req.body.password;
-    await user.save();
-
-    sendTokenResponse(user, 200, res);
 };
 
 // Send Token Function
@@ -126,7 +205,7 @@ const sendTokenResponse = (user, statusCode, res) => {
         name: user.name,
         telephone: user.telephone,
         email: user.email,
-        role: user.role, // <---- เพิ่มบรรทัดนี้ สำคัญมาก!
-        token
+        role: user.role,
+        token: token
     });
-};
+}
